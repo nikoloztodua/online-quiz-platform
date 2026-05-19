@@ -1,46 +1,75 @@
-// Online Quiz Platform — Frontend Root
-// Authors: Nikoloz Todua, Iakobi Gogebashvili
-
-import { useState, useEffect } from 'react';
-import './App.css';
+import { useState } from 'react';
+import TopBar from './components/TopBar.jsx';
+import AdminPanel from './pages/AdminPanel.jsx';
+import AuthPage from './pages/AuthPage.jsx';
+import ResultPage from './pages/ResultPage.jsx';
+import StudentDashboard from './pages/StudentDashboard.jsx';
+import TakeQuiz from './pages/TakeQuiz.jsx';
+import TeacherDashboard from './pages/TeacherDashboard.jsx';
+import { layout } from './lib/ui.js';
 
 function App() {
-  const [health, setHealth] = useState(null);
-  const [error, setError] = useState(null);
+  const [token, setToken] = useState(() => localStorage.getItem('quiz_token') || '');
+  const [user, setUser] = useState(() => {
+    const stored = localStorage.getItem('quiz_user');
+    return stored ? JSON.parse(stored) : null;
+  });
+  const [view, setView] = useState('dashboard');
+  const [selectedQuizId, setSelectedQuizId] = useState(null);
+  const [selectedAttemptId, setSelectedAttemptId] = useState(null);
 
-  useEffect(() => {
-    // ბექენდის შემოწმება — call backend health endpoint
-    fetch('http://localhost:3000/api/health')
-      .then((res) => res.json())
-      .then((data) => setHealth(data))
-      .catch((err) => setError(err.message));
-  }, []);
+  const isAuthed = Boolean(token && user);
+
+  function handleSession(nextToken, nextUser) {
+    setToken(nextToken);
+    setUser(nextUser);
+    localStorage.setItem('quiz_token', nextToken);
+    localStorage.setItem('quiz_user', JSON.stringify(nextUser));
+    setView('dashboard');
+  }
+
+  function logout() {
+    setToken('');
+    setUser(null);
+    localStorage.removeItem('quiz_token');
+    localStorage.removeItem('quiz_user');
+    setView('dashboard');
+    setSelectedQuizId(null);
+    setSelectedAttemptId(null);
+  }
+
+  function openQuiz(id) {
+    setSelectedQuizId(id);
+    setView('take');
+  }
+
+  function openResult(id) {
+    setSelectedAttemptId(id);
+    setView('result');
+  }
+
+  let content = <AuthPage onSession={handleSession} />;
+  if (isAuthed && user.role === 'teacher') {
+    content = <TeacherDashboard token={token} user={user} />;
+  }
+  if (isAuthed && user.role === 'student') {
+    content =
+      view === 'take' ? (
+        <TakeQuiz token={token} quizId={selectedQuizId} onBack={() => setView('dashboard')} onResult={openResult} />
+      ) : view === 'result' ? (
+        <ResultPage token={token} attemptId={selectedAttemptId} onBack={() => setView('dashboard')} />
+      ) : (
+        <StudentDashboard token={token} onTake={openQuiz} onResult={openResult} />
+      );
+  }
+  if (isAuthed && user.role === 'admin') {
+    content = <AdminPanel token={token} user={user} />;
+  }
 
   return (
-    <div style={{ padding: '2rem', fontFamily: 'sans-serif', maxWidth: '720px' }}>
-      <h1>Online Quiz Platform</h1>
-      <p style={{ color: '#666' }}>
-        Group 1 — Nikoloz Todua, Iakobi Gogebashvili
-      </p>
-
-      <h3>Backend connection test</h3>
-
-      {error && (
-        <p style={{ color: 'red' }}>
-          ❌ Backend error: {error}
-        </p>
-      )}
-
-      {health && (
-        <div>
-          <p style={{ color: 'green' }}>✅ Backend connected</p>
-          <pre style={{ background: '#f4f4f4', padding: '1rem', borderRadius: '6px' }}>
-            {JSON.stringify(health, null, 2)}
-          </pre>
-        </div>
-      )}
-
-      {!health && !error && <p>Loading...</p>}
+    <div className={layout.appShell}>
+      {isAuthed && <TopBar user={user} onDashboard={() => setView('dashboard')} onLogout={logout} />}
+      {content}
     </div>
   );
 }
