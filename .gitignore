@@ -37,3 +37,6 @@ desktop.ini
 # Cache
 .cache/
 .vite/
+
+*.db-shm
+*.db-wal
