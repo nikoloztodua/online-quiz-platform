@@ -150,20 +150,62 @@ router.post('/:id/attempts', requireAuth, requireRole('student'), (req, res) => 
   });
 });
 
-// PUT /api/quizzes/:id — teacher updates title + description of their own quiz
+function validateQuizInput(title, questions) {
+  if (!title || !title.trim()) {
+    return 'title is required';
+  }
+  if (!Array.isArray(questions) || questions.length === 0) {
+    return 'at least one question is required';
+  }
+  for (const [qi, q] of questions.entries()) {
+    if (!q.text || !q.text.trim()) {
+      return `question ${qi + 1}: text is required`;
+    }
+    if (!Array.isArray(q.options) || q.options.length < 2) {
+      return `question ${qi + 1}: at least 2 options required`;
+    }
+    const correctCount = q.options.filter((o) => o.is_correct).length;
+    if (correctCount !== 1) {
+      return `question ${qi + 1}: exactly one correct option required`;
+    }
+    if (q.options.some((o) => !o.text || !o.text.trim())) {
+      return `question ${qi + 1}: option text is required`;
+    }
+  }
+  return null;
+}
+
+// PUT /api/quizzes/:id — teacher updates quiz details, questions, and options
 router.put('/:id', requireAuth, requireRole('teacher'), (req, res) => {
   const quiz = db.prepare('SELECT * FROM quizzes WHERE id = ?').get(req.params.id);
   if (!quiz) return res.status(404).json({ error: 'quiz not found' });
   if (quiz.created_by !== req.user.id) return res.status(403).json({ error: 'not your quiz' });
 
-  const { title, description } = req.body;
-  if (!title || !title.trim()) return res.status(400).json({ error: 'title is required' });
+  const { title, description, questions } = req.body;
+  const validationError = validateQuizInput(title, questions);
+  if (validationError) return res.status(400).json({ error: validationError });
 
-  db.prepare('UPDATE quizzes SET title = ?, description = ? WHERE id = ?').run(
-    title.trim(),
-    description?.trim() || '',
-    quiz.id
+  const updateQuiz = db.prepare('UPDATE quizzes SET title = ?, description = ? WHERE id = ?');
+  const deleteQuestions = db.prepare('DELETE FROM questions WHERE quiz_id = ?');
+  const insertQuestion = db.prepare(
+    'INSERT INTO questions (quiz_id, text, order_index) VALUES (?, ?, ?)'
   );
+  const insertOption = db.prepare(
+    'INSERT INTO options (question_id, text, is_correct) VALUES (?, ?, ?)'
+  );
+
+  const replaceQuiz = db.transaction(() => {
+    updateQuiz.run(title.trim(), description?.trim() || '', quiz.id);
+    deleteQuestions.run(quiz.id);
+    for (const [qi, q] of questions.entries()) {
+      const question = insertQuestion.run(quiz.id, q.text.trim(), qi);
+      for (const option of q.options) {
+        insertOption.run(question.lastInsertRowid, option.text.trim(), option.is_correct ? 1 : 0);
+      }
+    }
+  });
+
+  replaceQuiz();
 
   return res.json(db.prepare('SELECT * FROM quizzes WHERE id = ?').get(quiz.id));
 });

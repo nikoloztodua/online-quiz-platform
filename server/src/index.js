@@ -50,6 +50,55 @@ app.get('/api/attempts/me', requireAuth, requireRole('student'), (req, res) => {
   return res.json(attempts);
 });
 
+app.get('/api/attempts/:id', requireAuth, (req, res) => {
+  const attempt = db
+    .prepare(
+      `SELECT a.*, q.title AS quiz_title, q.description AS quiz_description, q.created_by
+      FROM attempts a
+      LEFT JOIN quizzes q ON q.id = a.quiz_id
+      WHERE a.id = ?`
+    )
+    .get(req.params.id);
+
+  if (!attempt) return res.status(404).json({ error: 'attempt not found' });
+
+  const canView =
+    req.user.role === 'admin' ||
+    attempt.student_id === req.user.id ||
+    (req.user.role === 'teacher' && attempt.created_by === req.user.id);
+
+  if (!canView) return res.status(403).json({ error: 'not allowed to view this attempt' });
+
+  const questions = db
+    .prepare('SELECT * FROM questions WHERE quiz_id = ? ORDER BY order_index')
+    .all(attempt.quiz_id);
+  const answers = db
+    .prepare('SELECT question_id, option_id FROM answers WHERE attempt_id = ?')
+    .all(attempt.id);
+  const selectedByQuestion = new Map(answers.map((answer) => [answer.question_id, answer.option_id]));
+
+  for (const question of questions) {
+    question.selected_option_id = selectedByQuestion.get(question.id) || null;
+    question.options = db
+      .prepare('SELECT id, question_id, text, is_correct FROM options WHERE question_id = ?')
+      .all(question.id);
+  }
+
+  return res.json({
+    id: attempt.id,
+    score: attempt.score,
+    total: attempt.total,
+    percentage: attempt.total ? Math.round((attempt.score / attempt.total) * 100) : 0,
+    submitted_at: attempt.submitted_at,
+    quiz: {
+      id: attempt.quiz_id,
+      title: attempt.quiz_title,
+      description: attempt.quiz_description,
+    },
+    questions,
+  });
+});
+
 // ── Quizzes ───────────────────────────────────────────────────────────────────
 
 app.use('/api/quizzes', quizzesRouter);
