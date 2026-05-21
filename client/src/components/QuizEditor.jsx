@@ -18,7 +18,9 @@ function QuizEditor({ token, quiz, onSaved }) {
   function updateQuestion(index, patch) {
     setForm((current) => ({
       ...current,
-      questions: current.questions.map((question, questionIndex) => questionIndex === index ? { ...question, ...patch } : question),
+      questions: current.questions.map((question, questionIndex) =>
+        questionIndex === index ? { ...question, ...patch } : question
+      ),
     }));
   }
 

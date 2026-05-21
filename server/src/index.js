@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import db from './db/init.js';
+import { seedAdmin } from './db/seedAdmin.js';
 import { requireAuth, requireRole } from './middleware/auth.js';
 import authRouter from './routes/auth.js';
 import quizzesRouter from './routes/quizzes.js';
@@ -15,17 +16,11 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// ── Public ────────────────────────────────────────────────────────────────────
-
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// ── Auth ──────────────────────────────────────────────────────────────────────
-
 app.use('/api/auth', authRouter);
-
-// ── Current user ──────────────────────────────────────────────────────────────
 
 app.get('/api/me', requireAuth, (req, res) => {
   const user = db
@@ -34,8 +29,6 @@ app.get('/api/me', requireAuth, (req, res) => {
   if (!user) return res.status(404).json({ error: 'user not found' });
   return res.json(user);
 });
-
-// ── Student: own attempt history ──────────────────────────────────────────────
 
 app.get('/api/attempts/me', requireAuth, requireRole('student'), (req, res) => {
   const attempts = db
@@ -75,7 +68,9 @@ app.get('/api/attempts/:id', requireAuth, (req, res) => {
   const answers = db
     .prepare('SELECT question_id, option_id FROM answers WHERE attempt_id = ?')
     .all(attempt.id);
-  const selectedByQuestion = new Map(answers.map((answer) => [answer.question_id, answer.option_id]));
+  const selectedByQuestion = new Map(
+    answers.map((answer) => [answer.question_id, answer.option_id])
+  );
 
   for (const question of questions) {
     question.selected_option_id = selectedByQuestion.get(question.id) || null;
@@ -99,22 +94,17 @@ app.get('/api/attempts/:id', requireAuth, (req, res) => {
   });
 });
 
-// ── Quizzes ───────────────────────────────────────────────────────────────────
-
 app.use('/api/quizzes', quizzesRouter);
-
-// ── Admin ─────────────────────────────────────────────────────────────────────
-
 app.use('/api/admin', adminRouter);
-
-// ── 404 fallback ──────────────────────────────────────────────────────────────
 
 app.use((req, res) => {
   res.status(404).json({ error: `cannot ${req.method} ${req.path}` });
 });
 
-// ── Start ─────────────────────────────────────────────────────────────────────
-
-app.listen(PORT, () => {
-  console.log(`✅ Server running on http://localhost:${PORT}`);
-});
+seedAdmin()
+  .catch((err) => console.error('Admin seeding failed:', err))
+  .finally(() => {
+    app.listen(PORT, () => {
+      console.log(`✅ Server running on http://localhost:${PORT}`);
+    });
+  });
