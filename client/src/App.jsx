@@ -48,27 +48,49 @@ function App() {
     setView('result');
   }
 
-  let content = <AuthPage onSession={handleSession} />;
-  if (isAuthed && user.role === 'teacher') {
-    content = <TeacherDashboard token={token} user={user} />;
-  }
-  if (isAuthed && user.role === 'student') {
-    content =
-      view === 'take' ? (
-        <TakeQuiz token={token} quizId={selectedQuizId} onBack={() => setView('dashboard')} onResult={openResult} />
-      ) : view === 'result' ? (
-        <ResultPage token={token} attemptId={selectedAttemptId} onBack={() => setView('dashboard')} />
-      ) : (
-        <StudentDashboard token={token} onTake={openQuiz} onResult={openResult} />
-      );
-  }
-  if (isAuthed && user.role === 'admin') {
-    content = <AdminPanel token={token} user={user} />;
+  let content;
+
+  if (!isAuthed) {
+    content = <AuthPage onSession={handleSession} />;
+  } else {
+    switch (user.role) {
+      case 'teacher':
+        content = <TeacherDashboard token={token} user={user} />;
+        break;
+        
+      case 'admin':
+        content = <AdminPanel token={token} user={user} />;
+        break;
+        
+      case 'student':
+        if (view === 'take') {
+          content = <TakeQuiz token={token} quizId={selectedQuizId} onBack={() => setView('dashboard')} onResult={openResult} />;
+        } else if (view === 'result') {
+          content = <ResultPage token={token} attemptId={selectedAttemptId} onBack={() => setView('dashboard')} />;
+        } else {
+          content = <StudentDashboard token={token} onTake={openQuiz} onResult={openResult} />;
+        }
+        break;
+
+      default:
+        content = <AuthPage onSession={handleSession} />;
+        break;
+    }
   }
 
   return (
     <div className={layout.appShell}>
-      {isAuthed && <TopBar user={user} onDashboard={() => setView('dashboard')} onLogout={logout} />}
+      {isAuthed && (
+        <TopBar 
+          user={user} 
+          onDashboard={() => {
+            setSelectedQuizId(null);
+            setSelectedAttemptId(null);
+            setView('dashboard');
+          }} 
+          onLogout={logout} 
+        />
+      )}
       {content}
     </div>
   );
