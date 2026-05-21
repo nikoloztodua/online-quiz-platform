@@ -4,30 +4,36 @@ import db from '../db/init.js';
 
 const router = express.Router();
 
-// POST /api/quizzes — teacher creates quiz with questions + options
-router.post('/', requireAuth, requireRole('teacher'), (req, res) => {
-  const { title, description, questions } = req.body;
-
+function validateQuizInput(title, questions) {
   if (!title || !title.trim()) {
-    return res.status(400).json({ error: 'title is required' });
+    return 'title is required';
   }
   if (!Array.isArray(questions) || questions.length === 0) {
-    return res.status(400).json({ error: 'at least one question is required' });
+    return 'at least one question is required';
   }
   for (const [qi, q] of questions.entries()) {
     if (!q.text || !q.text.trim()) {
-      return res.status(400).json({ error: `question ${qi + 1}: text is required` });
+      return `question ${qi + 1}: text is required`;
     }
     if (!Array.isArray(q.options) || q.options.length < 2) {
-      return res.status(400).json({ error: `question ${qi + 1}: at least 2 options required` });
+      return `question ${qi + 1}: at least 2 options required`;
     }
     const correctCount = q.options.filter((o) => o.is_correct).length;
     if (correctCount !== 1) {
-      return res
-        .status(400)
-        .json({ error: `question ${qi + 1}: exactly one correct option required` });
+      return `question ${qi + 1}: exactly one correct option required`;
+    }
+    if (q.options.some((o) => !o.text || !o.text.trim())) {
+      return `question ${qi + 1}: option text is required`;
     }
   }
+  return null;
+}
+
+router.post('/', requireAuth, requireRole('teacher'), (req, res) => {
+  const { title, description, questions } = req.body;
+
+  const validationError = validateQuizInput(title, questions);
+  if (validationError) return res.status(400).json({ error: validationError });
 
   const insertQuiz = db.prepare(
     'INSERT INTO quizzes (title, description, created_by) VALUES (?, ?, ?)'
@@ -55,7 +61,6 @@ router.post('/', requireAuth, requireRole('teacher'), (req, res) => {
   return res.status(201).json(created);
 });
 
-// GET /api/quizzes — list all quizzes with question count + teacher name
 router.get('/', requireAuth, (req, res) => {
   const quizzes = db
     .prepare(
@@ -71,8 +76,6 @@ router.get('/', requireAuth, (req, res) => {
   return res.json(quizzes);
 });
 
-// GET /api/quizzes/:id — get one quiz with questions + options
-// Students do NOT see is_correct
 router.get('/:id', requireAuth, (req, res) => {
   const quiz = db.prepare('SELECT * FROM quizzes WHERE id = ?').get(req.params.id);
   if (!quiz) return res.status(404).json({ error: 'quiz not found' });
@@ -94,12 +97,11 @@ router.get('/:id', requireAuth, (req, res) => {
   return res.json(quiz);
 });
 
-// POST /api/quizzes/:id/attempts — student submits answers, server grades
 router.post('/:id/attempts', requireAuth, requireRole('student'), (req, res) => {
   const quiz = db.prepare('SELECT * FROM quizzes WHERE id = ?').get(req.params.id);
   if (!quiz) return res.status(404).json({ error: 'quiz not found' });
 
-  const { answers } = req.body; // expected: [{ question_id, option_id }]
+  const { answers } = req.body; 
   if (!Array.isArray(answers) || answers.length === 0) {
     return res.status(400).json({ error: 'answers array is required' });
   }
@@ -150,32 +152,6 @@ router.post('/:id/attempts', requireAuth, requireRole('student'), (req, res) => 
   });
 });
 
-function validateQuizInput(title, questions) {
-  if (!title || !title.trim()) {
-    return 'title is required';
-  }
-  if (!Array.isArray(questions) || questions.length === 0) {
-    return 'at least one question is required';
-  }
-  for (const [qi, q] of questions.entries()) {
-    if (!q.text || !q.text.trim()) {
-      return `question ${qi + 1}: text is required`;
-    }
-    if (!Array.isArray(q.options) || q.options.length < 2) {
-      return `question ${qi + 1}: at least 2 options required`;
-    }
-    const correctCount = q.options.filter((o) => o.is_correct).length;
-    if (correctCount !== 1) {
-      return `question ${qi + 1}: exactly one correct option required`;
-    }
-    if (q.options.some((o) => !o.text || !o.text.trim())) {
-      return `question ${qi + 1}: option text is required`;
-    }
-  }
-  return null;
-}
-
-// PUT /api/quizzes/:id — teacher updates quiz details, questions, and options
 router.put('/:id', requireAuth, requireRole('teacher'), (req, res) => {
   const quiz = db.prepare('SELECT * FROM quizzes WHERE id = ?').get(req.params.id);
   if (!quiz) return res.status(404).json({ error: 'quiz not found' });
@@ -186,16 +162,14 @@ router.put('/:id', requireAuth, requireRole('teacher'), (req, res) => {
   if (validationError) return res.status(400).json({ error: validationError });
 
   const updateQuiz = db.prepare('UPDATE quizzes SET title = ?, description = ? WHERE id = ?');
+  const deleteOptions = db.prepare('DELETE FROM options WHERE question_id IN (SELECT id FROM questions WHERE quiz_id = ?)');
   const deleteQuestions = db.prepare('DELETE FROM questions WHERE quiz_id = ?');
-  const insertQuestion = db.prepare(
-    'INSERT INTO questions (quiz_id, text, order_index) VALUES (?, ?, ?)'
-  );
-  const insertOption = db.prepare(
-    'INSERT INTO options (question_id, text, is_correct) VALUES (?, ?, ?)'
-  );
+  const insertQuestion = db.prepare('INSERT INTO questions (quiz_id, text, order_index) VALUES (?, ?, ?)');
+  const insertOption = db.prepare('INSERT INTO options (question_id, text, is_correct) VALUES (?, ?, ?)');
 
   const replaceQuiz = db.transaction(() => {
     updateQuiz.run(title.trim(), description?.trim() || '', quiz.id);
+    deleteOptions.run(quiz.id); 
     deleteQuestions.run(quiz.id);
     for (const [qi, q] of questions.entries()) {
       const question = insertQuestion.run(quiz.id, q.text.trim(), qi);
@@ -210,17 +184,26 @@ router.put('/:id', requireAuth, requireRole('teacher'), (req, res) => {
   return res.json(db.prepare('SELECT * FROM quizzes WHERE id = ?').get(quiz.id));
 });
 
-// DELETE /api/quizzes/:id — teacher deletes their own quiz (cascade handles the rest)
 router.delete('/:id', requireAuth, requireRole('teacher'), (req, res) => {
   const quiz = db.prepare('SELECT * FROM quizzes WHERE id = ?').get(req.params.id);
   if (!quiz) return res.status(404).json({ error: 'quiz not found' });
   if (quiz.created_by !== req.user.id) return res.status(403).json({ error: 'not your quiz' });
 
-  db.prepare('DELETE FROM quizzes WHERE id = ?').run(quiz.id);
-  return res.json({ message: 'quiz deleted' });
+  const deleteOptions = db.prepare('DELETE FROM options WHERE question_id IN (SELECT id FROM questions WHERE quiz_id = ?)');
+  const deleteQuestions = db.prepare('DELETE FROM questions WHERE quiz_id = ?');
+  const deleteQuiz = db.prepare('DELETE FROM quizzes WHERE id = ?');
+
+  const purgeQuiz = db.transaction(() => {
+    deleteOptions.run(quiz.id);
+    deleteQuestions.run(quiz.id);
+    deleteQuiz.run(quiz.id);
+  });
+
+  purgeQuiz();
+
+  return res.json({ message: 'quiz and all associated questions/options deleted successfully' });
 });
 
-// GET /api/quizzes/:id/attempts — teacher views all attempts on their quiz
 router.get('/:id/attempts', requireAuth, requireRole('teacher'), (req, res) => {
   const quiz = db.prepare('SELECT * FROM quizzes WHERE id = ?').get(req.params.id);
   if (!quiz) return res.status(404).json({ error: 'quiz not found' });
