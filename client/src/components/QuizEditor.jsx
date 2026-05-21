@@ -12,6 +12,7 @@ function QuizEditor({ token, quiz, onSaved }) {
       options: question.options.map((option) => ({ text: option.text, is_correct: Boolean(option.is_correct) })),
     })),
   } : { title: '', description: '', questions: [emptyQuestion()] };
+  
   const [form, setForm] = useState(initialForm);
   const [error, setError] = useState('');
 
@@ -46,9 +47,31 @@ function QuizEditor({ token, quiz, onSaved }) {
     });
   }
 
+  function removeOption(questionIndex, optionIndex) {
+    updateQuestion(questionIndex, {
+      options: form.questions[questionIndex].options.filter((_, index) => index !== optionIndex),
+    });
+  }
+
   async function save(event) {
     event.preventDefault();
     setError('');
+
+    for (let i = 0; i < form.questions.length; i++) {
+      const q = form.questions[i];
+      
+      if (q.options.length < 2) {
+        setError(`Question ${i + 1} must have at least 2 options.`);
+        return;
+      }
+      
+      const hasCorrect = q.options.some(opt => opt.is_correct);
+      if (!hasCorrect) {
+        setError(`Please select a correct answer for Question ${i + 1}.`);
+        return;
+      }
+    }
+
     try {
       await apiRequest(quiz ? `/quizzes/${quiz.id}` : '/quizzes', {
         method: quiz ? 'PUT' : 'POST',
@@ -73,33 +96,52 @@ function QuizEditor({ token, quiz, onSaved }) {
           <input className={formStyles.control} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
         </label>
       </div>
+      
       {form.questions.map((question, questionIndex) => (
         <div className={card.question} key={questionIndex}>
           <div className={layout.rowBetween}>
             <h3>Question {questionIndex + 1}</h3>
             {form.questions.length > 1 && (
-              <button type="button" className={button.ghost} onClick={() => setForm({ ...form, questions: form.questions.filter((_, index) => index !== questionIndex) })}>Remove</button>
+              <button type="button" className={button.ghost} onClick={() => setForm({ ...form, questions: form.questions.filter((_, index) => index !== questionIndex) })}>
+                Remove Question
+              </button>
             )}
           </div>
           <label className={formStyles.label}>
             Prompt
             <textarea className={formStyles.textarea} value={question.text} onChange={(e) => updateQuestion(questionIndex, { text: e.target.value })} required />
           </label>
+          
           <div className="grid gap-2.5">
             {question.options.map((option, optionIndex) => (
-              <label className="grid grid-cols-[22px_minmax(0,1fr)] items-center gap-2.5 rounded-lg" key={optionIndex}>
+              <div className="grid grid-cols-[22px_1fr_auto] items-center gap-2.5 rounded-lg" key={optionIndex}>
                 <input className={formStyles.radio} type="radio" name={`correct-${questionIndex}`} checked={option.is_correct} onChange={() => updateOption(questionIndex, optionIndex, { is_correct: true })} />
                 <input className={formStyles.control} value={option.text} onChange={(e) => updateOption(questionIndex, optionIndex, { text: e.target.value })} placeholder={`Option ${optionIndex + 1}`} required />
-              </label>
+                
+                {question.options.length > 2 && (
+                  <button type="button" className="text-xs text-rose-500 hover:underline px-2" onClick={() => removeOption(questionIndex, optionIndex)}>
+                    Delete
+                  </button>
+                )}
+              </div>
             ))}
           </div>
-          <button type="button" className={button.ghost} onClick={() => addOption(questionIndex)}>Add option</button>
+          
+          <button type="button" className={cn(button.ghost, 'w-fit mt-2')} onClick={() => addOption(questionIndex)}>
+            + Add option
+          </button>
         </div>
       ))}
-      {error && <p className={text.error}>{error}</p>}
-      <div className="flex flex-wrap justify-end gap-3">
-        <button type="button" className={button.secondary} onClick={() => setForm({ ...form, questions: [...form.questions, emptyQuestion()] })}>Add question</button>
-        <button className={button.primary}>{quiz ? 'Save changes' : 'Create quiz'}</button>
+      
+      {error && <p className={cn(text.error, 'p-3 bg-rose-50 rounded-lg')}>{error}</p>}
+      
+      <div className="flex flex-wrap justify-end gap-3 border-t border-slate-100 pt-4">
+        <button type="button" className={button.secondary} onClick={() => setForm({ ...form, questions: [...form.questions, emptyQuestion()] })}>
+          Add question
+        </button>
+        <button className={button.primary}>
+          {quiz ? 'Save changes' : 'Create quiz'}
+        </button>
       </div>
     </form>
   );
