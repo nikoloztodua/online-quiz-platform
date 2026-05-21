@@ -10,9 +10,13 @@ export async function seedAdmin() {
   if (existingAdmin) return;
 
   if (!email || !password) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('CRITICAL SECURITY ERROR: ADMIN_EMAIL and ADMIN_PASSWORD must be set in production environment!');
+    }
     console.warn('⚠️  ADMIN_EMAIL / ADMIN_PASSWORD not set — no admin created.');
     return;
   }
+  
   if (password.length < 6) {
     console.warn('⚠️  ADMIN_PASSWORD must be at least 6 characters — skipping.');
     return;
