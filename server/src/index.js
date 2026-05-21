@@ -31,13 +31,18 @@ app.get('/api/me', requireAuth, (req, res) => {
 });
 
 app.get('/api/attempts/me', requireAuth, requireRole('student'), (req, res) => {
+  // გაუმჯობესება: PRAGMA-თი ვამოწმებთ სვეტის სახელს, რომ კოდი არ გაფრინდეს თუ ბაზაში user_id წერია
+  const columns = db.prepare("PRAGMA table_info(attempts)").all();
+  const hasUserId = columns.some(col => col.name === 'user_id');
+  const studentColumn = hasUserId ? 'a.user_id' : 'a.student_id';
+
   const attempts = db
     .prepare(
       `SELECT a.*, q.title AS quiz_title
-      FROM attempts a
-      LEFT JOIN quizzes q ON q.id = a.quiz_id
-      WHERE a.student_id = ?
-      ORDER BY a.submitted_at DESC`
+       FROM attempts a
+       LEFT JOIN quizzes q ON q.id = a.quiz_id
+       WHERE ${studentColumn} = ?
+       ORDER BY a.submitted_at DESC`
     )
     .all(req.user.id);
   return res.json(attempts);
@@ -47,17 +52,19 @@ app.get('/api/attempts/:id', requireAuth, (req, res) => {
   const attempt = db
     .prepare(
       `SELECT a.*, q.title AS quiz_title, q.description AS quiz_description, q.created_by
-      FROM attempts a
-      LEFT JOIN quizzes q ON q.id = a.quiz_id
-      WHERE a.id = ?`
+       FROM attempts a
+       LEFT JOIN quizzes q ON q.id = a.quiz_id
+       WHERE a.id = ?`
     )
     .get(req.params.id);
 
   if (!attempt) return res.status(404).json({ error: 'attempt not found' });
 
+  const attemptStudentId = attempt.user_id || attempt.student_id;
+
   const canView =
     req.user.role === 'admin' ||
-    attempt.student_id === req.user.id ||
+    attemptStudentId === req.user.id ||
     (req.user.role === 'teacher' && attempt.created_by === req.user.id);
 
   if (!canView) return res.status(403).json({ error: 'not allowed to view this attempt' });
@@ -99,6 +106,11 @@ app.use('/api/admin', adminRouter);
 
 app.use((req, res) => {
   res.status(404).json({ error: `cannot ${req.method} ${req.path}` });
+});
+
+app.use((err, req, res, next) => {
+  console.error('❌ Server Error:', err.stack);
+  res.status(500).json({ error: 'Internal Server Error' });
 });
 
 seedAdmin()
