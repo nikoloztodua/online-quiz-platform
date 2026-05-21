@@ -8,6 +8,7 @@ A role-based quiz platform where teachers create quizzes, students take them, th
 
 - Nikoloz Todua — Backend, authentication, REST API, integration
 - Iakobi Gogebashvili — Frontend, React pages, UI
+- Luka Bakhturidze - Backend(authentication), quizzes api, Frontend(react components)
 
 ## Tech stack
 

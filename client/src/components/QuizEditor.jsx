@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { apiRequest } from '../lib/api.js';
 import { emptyQuestion } from '../lib/quizForm.js';
-import { button, card, form as formStyles, layout, text } from '../lib/ui.js';
+import { button, card, form as formStyles, layout, text, cn } from '../lib/ui.js';
 
 function QuizEditor({ token, quiz, onSaved }) {
   const initialForm = quiz ? {
