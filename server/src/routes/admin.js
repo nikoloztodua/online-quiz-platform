@@ -5,6 +5,7 @@ import db from '../db/init.js';
 
 const router = express.Router();
 const ALLOWED_ROLES = ['student', 'teacher', 'admin'];
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 router.use(requireAuth, requireRole('admin'));
 
@@ -34,6 +35,11 @@ router.post('/users', async (req, res) => {
   if (!name || !email || !password || !role) {
     return res.status(400).json({ error: 'All fields required: name, email, password, role' });
   }
+  
+  if (!EMAIL_REGEX.test(email)) {
+    return res.status(400).json({ error: 'Invalid email format' });
+  }
+
   if (!ALLOWED_ROLES.includes(role)) {
     return res.status(400).json({ error: `role must be one of: ${ALLOWED_ROLES.join(', ')}` });
   }
@@ -78,8 +84,13 @@ router.delete('/users/:id', (req, res) => {
   if (!user) return res.status(404).json({ error: 'user not found' });
   if (user.id === req.user.id) return res.status(400).json({ error: 'cannot delete yourself' });
 
-  db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
-  return res.json({ message: 'user deleted' });
+  const deleteTransaction = db.transaction((userId) => {
+    db.prepare('DELETE FROM attempts WHERE user_id = ?').run(userId);
+    db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+  });
+
+  deleteTransaction(user.id);
+  return res.json({ message: 'user and related records deleted' });
 });
 
 export default router;
