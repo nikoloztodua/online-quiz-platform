@@ -11,7 +11,7 @@ const td = 'border-b border-indigo-100 px-2.5 py-3.5 text-left whitespace-nowrap
 
 function StatCard({ label, value }) {
   return (
-    <div className="rounded-lg border border-indigo-100 bg-gradient-to-br from-white to-[#fafaff] p-4 shadow-[0_14px_28px_rgba(79,70,229,0.08)]">
+    <div className="rounded-lg border border-indigo-100 bg-linear-to-br from-white to-[#fafaff] p-4 shadow-[0_14px_28px_rgba(79,70,229,0.08)]">
       <p className="text-3xl font-black text-[#1f2437]">{value}</p>
       <p className={text.small}>{label}</p>
     </div>
@@ -62,14 +62,25 @@ function AdminPanel({ token, user }) {
       setNewUser(EMPTY_NEW_USER);
       setCreateState({ loading: false, error: '', success: `Created ${roleLabels[created.role]} account for ${created.email}.` });
       load();
+
+      setTimeout(() => {
+        setCreateState(prev => ({ ...prev, success: '' }));
+      }, 4000);
+
     } catch (err) {
       setCreateState({ loading: false, error: err.message, success: '' });
     }
   }
 
-  async function updateUser(id, role) {
+  async function handleRoleChange(id, currentName, currentRole, newRole) {
+    if (id === user.id) return;
+    if (!confirm(`Are you sure you want to change ${currentName}'s role from ${roleLabels[currentRole]} to ${roleLabels[newRole]}?`)) {
+      load(); 
+      return;
+    }
+    
     try {
-      await apiRequest(`/admin/users/${id}`, { method: 'PUT', token, body: JSON.stringify({ role }) });
+      await apiRequest(`/admin/users/${id}`, { method: 'PUT', token, body: JSON.stringify({ role: newRole }) });
       load();
     } catch (err) {
       setError(err.message);
@@ -88,11 +99,15 @@ function AdminPanel({ token, user }) {
 
   const term = query.trim().toLowerCase();
   const visibleUsers = term
-    ? users.filter((account) => account.name.toLowerCase().includes(term) || account.email.toLowerCase().includes(term))
+    ? users.filter((account) => 
+        account.name.toLowerCase().includes(term) || 
+        account.email.toLowerCase().includes(term) ||
+        account.role.toLowerCase().includes(term)
+      )
     : users;
 
   return (
-    <main className={cn(layout.panel, 'mx-auto my-8 w-[min(1100px,calc(100%_-_36px))]')}>
+    <main className={cn(layout.panel, 'mx-auto my-8 w-[min(1100px,calc(100%-36px))]')}>
       <div className={layout.sectionHeading}>
         <div>
           <p className={text.eyebrow}>Admin dashboard</p>
@@ -138,7 +153,7 @@ function AdminPanel({ token, user }) {
           <p className={text.eyebrow}>Users</p>
           <h2 className="text-xl font-black">{visibleUsers.length} shown</h2>
         </div>
-        <input className={cn(formStyles.control, 'max-w-xs')} placeholder="Search name or email..." value={query} onChange={(e) => setQuery(e.target.value)} />
+        <input className={cn(formStyles.control, 'max-w-xs')} placeholder="Search name, email or role..." value={query} onChange={(e) => setQuery(e.target.value)} />
       </div>
 
       <div className="overflow-x-auto">
@@ -158,7 +173,12 @@ function AdminPanel({ token, user }) {
                 <td className={td}>{account.name}</td>
                 <td className={td}>{account.email}</td>
                 <td className={td}>
-                  <select className={formStyles.control} value={account.role} onChange={(event) => updateUser(account.id, event.target.value)} disabled={account.id === user.id}>
+                  <select 
+                    className={formStyles.control} 
+                    value={account.role} 
+                    onChange={(event) => handleRoleChange(account.id, account.name, account.role, event.target.value)} 
+                    disabled={account.id === user.id}
+                  >
                     <option value="student">Student</option>
                     <option value="teacher">Teacher</option>
                     <option value="admin">Admin</option>
