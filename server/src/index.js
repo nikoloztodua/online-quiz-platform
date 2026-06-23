@@ -1,14 +1,19 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import db from './db/init.js';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+import { Attempt, Quiz, User, connectDb, isValidId, toId } from './db/init.js';
 import { seedAdmin } from './db/seedAdmin.js';
 import { requireAuth, requireRole } from './middleware/auth.js';
 import authRouter from './routes/auth.js';
 import quizzesRouter from './routes/quizzes.js';
 import adminRouter from './routes/admin.js';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+dotenv.config({ path: join(__dirname, '../.env') });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -22,82 +27,85 @@ app.get('/api/health', (req, res) => {
 
 app.use('/api/auth', authRouter);
 
-app.get('/api/me', requireAuth, (req, res) => {
-  const user = db
-    .prepare('SELECT id, email, name, role, created_at FROM users WHERE id = ?')
-    .get(req.user.id);
+app.get('/api/me', requireAuth, async (req, res) => {
+  if (!isValidId(req.user.id)) return res.status(404).json({ error: 'user not found' });
+
+  const user = await User.findById(req.user.id);
   if (!user) return res.status(404).json({ error: 'user not found' });
-  return res.json(user);
+
+  return res.json({
+    id: toId(user),
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    created_at: user.created_at,
+  });
 });
 
-app.get('/api/attempts/me', requireAuth, requireRole('student'), (req, res) => {
-  // გაუმჯობესება: PRAGMA-თი ვამოწმებთ სვეტის სახელს, რომ კოდი არ გაფრინდეს თუ ბაზაში user_id წერია
-  const columns = db.prepare("PRAGMA table_info(attempts)").all();
-  const hasUserId = columns.some(col => col.name === 'user_id');
-  const studentColumn = hasUserId ? 'a.user_id' : 'a.student_id';
+app.get('/api/attempts/me', requireAuth, requireRole('student'), async (req, res) => {
+  const attempts = await Attempt.find({ student_id: req.user.id })
+    .sort({ submitted_at: -1 })
+    .populate('quiz_id', 'title');
 
-  const attempts = db
-    .prepare(
-      `SELECT a.*, q.title AS quiz_title
-       FROM attempts a
-       LEFT JOIN quizzes q ON q.id = a.quiz_id
-       WHERE ${studentColumn} = ?
-       ORDER BY a.submitted_at DESC`
-    )
-    .all(req.user.id);
-  return res.json(attempts);
+  return res.json(
+    attempts.map((attempt) => ({
+      id: toId(attempt),
+      quiz_id: toId(attempt.quiz_id),
+      student_id: toId(attempt.student_id),
+      quiz_title: attempt.quiz_id?.title || 'Deleted quiz',
+      score: attempt.score,
+      total: attempt.total,
+      submitted_at: attempt.submitted_at,
+    }))
+  );
 });
 
-app.get('/api/attempts/:id', requireAuth, (req, res) => {
-  const attempt = db
-    .prepare(
-      `SELECT a.*, q.title AS quiz_title, q.description AS quiz_description, q.created_by
-       FROM attempts a
-       LEFT JOIN quizzes q ON q.id = a.quiz_id
-       WHERE a.id = ?`
-    )
-    .get(req.params.id);
+app.get('/api/attempts/:id', requireAuth, async (req, res) => {
+  if (!isValidId(req.params.id)) return res.status(404).json({ error: 'attempt not found' });
 
+  const attempt = await Attempt.findById(req.params.id);
   if (!attempt) return res.status(404).json({ error: 'attempt not found' });
 
-  const attemptStudentId = attempt.user_id || attempt.student_id;
+  const quiz = await Quiz.findById(attempt.quiz_id);
+  if (!quiz) return res.status(404).json({ error: 'quiz not found' });
 
   const canView =
     req.user.role === 'admin' ||
-    attemptStudentId === req.user.id ||
-    (req.user.role === 'teacher' && attempt.created_by === req.user.id);
+    toId(attempt.student_id) === req.user.id ||
+    (req.user.role === 'teacher' && toId(quiz.created_by) === req.user.id);
 
   if (!canView) return res.status(403).json({ error: 'not allowed to view this attempt' });
 
-  const questions = db
-    .prepare('SELECT * FROM questions WHERE quiz_id = ? ORDER BY order_index')
-    .all(attempt.quiz_id);
-  const answers = db
-    .prepare('SELECT question_id, option_id FROM answers WHERE attempt_id = ?')
-    .all(attempt.id);
   const selectedByQuestion = new Map(
-    answers.map((answer) => [answer.question_id, answer.option_id])
+    attempt.answers.map((answer) => [toId(answer.question_id), toId(answer.option_id)])
   );
 
-  for (const question of questions) {
-    question.selected_option_id = selectedByQuestion.get(question.id) || null;
-    question.options = db
-      .prepare('SELECT id, question_id, text, is_correct FROM options WHERE question_id = ?')
-      .all(question.id);
-  }
-
   return res.json({
-    id: attempt.id,
+    id: toId(attempt),
     score: attempt.score,
     total: attempt.total,
     percentage: attempt.total ? Math.round((attempt.score / attempt.total) * 100) : 0,
     submitted_at: attempt.submitted_at,
     quiz: {
-      id: attempt.quiz_id,
-      title: attempt.quiz_title,
-      description: attempt.quiz_description,
+      id: toId(quiz),
+      title: quiz.title,
+      description: quiz.description,
     },
-    questions,
+    questions: quiz.questions
+      .slice()
+      .sort((a, b) => a.order_index - b.order_index)
+      .map((question) => ({
+        id: toId(question),
+        text: question.text,
+        order_index: question.order_index,
+        selected_option_id: selectedByQuestion.get(toId(question)) || null,
+        options: question.options.map((option) => ({
+          id: toId(option),
+          question_id: toId(question),
+          text: option.text,
+          is_correct: option.is_correct,
+        })),
+      })),
   });
 });
 
@@ -113,10 +121,14 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal Server Error' });
 });
 
-seedAdmin()
-  .catch((err) => console.error('Admin seeding failed:', err))
-  .finally(() => {
+connectDb()
+  .then(seedAdmin)
+  .then(() => {
     app.listen(PORT, () => {
-      console.log(`✅ Server running on http://localhost:${PORT}`);
+      console.log(`Server running on http://localhost:${PORT}`);
     });
+  })
+  .catch((err) => {
+    console.error('Server startup failed:', err);
+    process.exit(1);
   });

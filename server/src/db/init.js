@@ -1,70 +1,66 @@
-import Database from 'better-sqlite3';
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
-import { mkdirSync } from 'fs';
+import mongoose from 'mongoose';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const { Schema } = mongoose;
 
-const DB_PATH = join(__dirname, '../../data/quiz.db');
+const userSchema = new Schema({
+  email: { type: String, required: true, unique: true, trim: true, lowercase: true },
+  password_hash: { type: String, required: true },
+  name: { type: String, required: true, trim: true },
+  role: {
+    type: String,
+    required: true,
+    enum: ['student', 'teacher', 'admin'],
+  },
+  created_at: { type: Date, default: Date.now },
+});
 
-mkdirSync(dirname(DB_PATH), { recursive: true });
+const optionSchema = new Schema({
+  text: { type: String, required: true, trim: true },
+  is_correct: { type: Boolean, required: true, default: false },
+});
 
-const db = new Database(DB_PATH);
+const questionSchema = new Schema({
+  text: { type: String, required: true, trim: true },
+  order_index: { type: Number, required: true, default: 0 },
+  options: { type: [optionSchema], default: [] },
+});
 
-// Must be enabled per-connection — SQLite doesn't enforce FK constraints by default
-db.pragma('foreign_keys = ON');
-db.pragma('journal_mode = WAL');
+const quizSchema = new Schema({
+  title: { type: String, required: true, trim: true },
+  description: { type: String, default: '', trim: true },
+  created_by: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  questions: { type: [questionSchema], default: [] },
+  created_at: { type: Date, default: Date.now },
+});
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    email         TEXT    NOT NULL UNIQUE,
-    password_hash TEXT    NOT NULL,
-    name          TEXT    NOT NULL,
-    role          TEXT    NOT NULL CHECK(role IN ('student', 'teacher', 'admin')),
-    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+const answerSchema = new Schema({
+  question_id: { type: Schema.Types.ObjectId, required: true },
+  option_id: { type: Schema.Types.ObjectId, required: true },
+});
 
-  CREATE TABLE IF NOT EXISTS quizzes (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    title       TEXT    NOT NULL,
-    description TEXT    NOT NULL DEFAULT '',
-    created_by  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+const attemptSchema = new Schema({
+  quiz_id: { type: Schema.Types.ObjectId, ref: 'Quiz', required: true },
+  student_id: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  score: { type: Number, required: true, default: 0 },
+  total: { type: Number, required: true, default: 0 },
+  answers: { type: [answerSchema], default: [] },
+  submitted_at: { type: Date, default: Date.now },
+});
 
-  CREATE TABLE IF NOT EXISTS questions (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    quiz_id     INTEGER NOT NULL REFERENCES quizzes(id) ON DELETE CASCADE,
-    text        TEXT    NOT NULL,
-    order_index INTEGER NOT NULL DEFAULT 0
-  );
+export const User = mongoose.model('User', userSchema);
+export const Quiz = mongoose.model('Quiz', quizSchema);
+export const Attempt = mongoose.model('Attempt', attemptSchema);
 
-  CREATE TABLE IF NOT EXISTS options (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    question_id INTEGER NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
-    text        TEXT    NOT NULL,
-    is_correct  INTEGER NOT NULL DEFAULT 0 CHECK(is_correct IN (0, 1))
-  );
+export function isValidId(id) {
+  return mongoose.Types.ObjectId.isValid(id);
+}
 
-  CREATE TABLE IF NOT EXISTS attempts (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    quiz_id      INTEGER NOT NULL REFERENCES quizzes(id) ON DELETE CASCADE,
-    student_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    score        INTEGER NOT NULL DEFAULT 0,
-    total        INTEGER NOT NULL DEFAULT 0,
-    submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+export function toId(value) {
+  return value?._id?.toString?.() || value?.toString?.() || value;
+}
 
-  CREATE TABLE IF NOT EXISTS answers (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    attempt_id  INTEGER NOT NULL REFERENCES attempts(id) ON DELETE CASCADE,
-    question_id INTEGER NOT NULL REFERENCES questions(id) ON DELETE CASCADE,
-    option_id   INTEGER NOT NULL REFERENCES options(id)  ON DELETE CASCADE
-  );
-`);
-
-console.log(`✅ Database initialized at ${DB_PATH}`);
-
-export default db;
+export async function connectDb() {
+  const uri = process.env.MONGO_URI || 'mongodb://localhost:27017/online_quiz_platform';
+  await mongoose.connect(uri);
+  console.log(`Database connected at ${uri}`);
+}

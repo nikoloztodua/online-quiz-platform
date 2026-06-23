@@ -1,16 +1,27 @@
 import express from 'express';
-import db from '../db/init.js';
+import { User, toId } from '../db/init.js';
 import { hashPassword, verifyPassword, signToken } from '../utils/auth.js';
 
 const router = express.Router();
 
 const ALLOWED_ROLES = ['student', 'teacher'];
 
+function userResponse(user) {
+  return {
+    id: toId(user),
+    email: user.email,
+    name: user.name,
+    role: user.role,
+    created_at: user.created_at,
+  };
+}
+
 router.post('/register', async (req, res) => {
   try {
     const { email, password, name, role } = req.body;
+    const normalizedEmail = email?.trim().toLowerCase();
 
-    if (!email || !password || !name || !role) {
+    if (!normalizedEmail || !password || !name || !role) {
       return res.status(400).json({ error: 'All fields required: email, password, name, role' });
     }
     if (!ALLOWED_ROLES.includes(role)) {
@@ -20,22 +31,24 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
-    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    const existing = await User.exists({ email: normalizedEmail });
     if (existing) {
       return res.status(409).json({ error: 'Email already registered' });
     }
 
     const password_hash = await hashPassword(password);
-    const result = db
-      .prepare('INSERT INTO users (email, password_hash, name, role) VALUES (?, ?, ?, ?)')
-      .run(email, password_hash, name, role);
+    const user = await User.create({
+      email: normalizedEmail,
+      password_hash,
+      name: name.trim(),
+      role,
+    });
 
-    const user = db
-      .prepare('SELECT id, email, name, role, created_at FROM users WHERE id = ?')
-      .get(result.lastInsertRowid);
-
-    return res.status(201).json({ user });
+    return res.status(201).json({ user: userResponse(user) });
   } catch (err) {
+    if (err.code === 11000) {
+      return res.status(409).json({ error: 'Email already registered' });
+    }
     console.error('Register error:', err);
     return res.status(500).json({ error: 'Internal server error' });
   }
@@ -44,14 +57,13 @@ router.post('/register', async (req, res) => {
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
+    const normalizedEmail = email?.trim().toLowerCase();
 
-    if (!email || !password) {
+    if (!normalizedEmail || !password) {
       return res.status(400).json({ error: 'Email and password required' });
     }
 
-    const user = db
-      .prepare('SELECT id, email, password_hash, name, role FROM users WHERE email = ?')
-      .get(email);
+    const user = await User.findOne({ email: normalizedEmail });
 
     if (!user) {
       return res.status(401).json({ error: 'Invalid email or password' });
@@ -62,11 +74,11 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    const token = signToken({ id: user.id, email: user.email, role: user.role });
+    const token = signToken({ id: toId(user), email: user.email, role: user.role });
 
     return res.json({
       token,
-      user: { id: user.id, email: user.email, name: user.name, role: user.role },
+      user: userResponse(user),
     });
   } catch (err) {
     console.error('Login error:', err);

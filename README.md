@@ -13,8 +13,8 @@ A role-based quiz platform where teachers create quizzes, students take them, th
 ## Tech stack
 
 - Frontend: React 18, Vite, React Router v6, CSS Modules, axios
-- Backend: Node.js, Express 4, better-sqlite3, JWT, bcryptjs
-- Database: SQLite
+- Backend: Node.js, Express, MongoDB/Mongoose, JWT, bcryptjs
+- Database: MongoDB
 
 ## Features
 
@@ -29,3 +29,7 @@ A role-based quiz platform where teachers create quizzes, students take them, th
 ## Status
 
 In development.
+
+## start mongodb database
+
+docker compose up -d mongodb
