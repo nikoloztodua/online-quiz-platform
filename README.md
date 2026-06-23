@@ -33,3 +33,11 @@ In development.
 ## start mongodb database
 
 docker compose up -d mongodb
+
+## stop the database
+
+docker compose down
+
+## stop the database including volume
+
+docker compose down -v
