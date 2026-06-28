@@ -85,7 +85,7 @@ function TeacherDashboard({ token, user }) {
               <button className={card.listItem} key={quiz.id} onClick={() => selectQuiz(quiz)}>
                 <span className="grid gap-1">
                   <strong>{quiz.title}</strong>
-                  <small className={text.small}>{quiz.question_count} questions</small>
+                  <small className={text.small}>{quiz.question_count} questions · {quiz.duration_minutes || 10} min</small>
                 </span>
                 <span className={card.pill}>{formatDate(quiz.created_at)}</span>
               </button>

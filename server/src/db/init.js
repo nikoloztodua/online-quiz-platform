@@ -28,6 +28,7 @@ const questionSchema = new Schema({
 const quizSchema = new Schema({
   title: { type: String, required: true, trim: true },
   description: { type: String, default: '', trim: true },
+  duration_minutes: { type: Number, required: true, min: 1, max: 180, default: 10 },
   created_by: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   questions: { type: [questionSchema], default: [] },
   created_at: { type: Date, default: Date.now },
@@ -44,7 +45,10 @@ const attemptSchema = new Schema({
   score: { type: Number, required: true, default: 0 },
   total: { type: Number, required: true, default: 0 },
   answers: { type: [answerSchema], default: [] },
-  submitted_at: { type: Date, default: Date.now },
+  status: { type: String, enum: ['in_progress', 'submitted'], default: 'submitted' },
+  started_at: { type: Date, default: Date.now },
+  expires_at: { type: Date },
+  submitted_at: { type: Date },
 });
 
 export const User = mongoose.model('User', userSchema);

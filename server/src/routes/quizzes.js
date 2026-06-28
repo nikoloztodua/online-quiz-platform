@@ -4,9 +4,12 @@ import { Attempt, Quiz, User, isValidId, toId } from '../db/init.js';
 
 const router = express.Router();
 
-function validateQuizInput(title, questions) {
+function validateQuizInput(title, durationMinutes, questions) {
   if (!title || !title.trim()) {
     return 'title is required';
+  }
+  if (!Number.isInteger(Number(durationMinutes)) || Number(durationMinutes) < 1 || Number(durationMinutes) > 180) {
+    return 'duration must be a whole number between 1 and 180 minutes';
   }
   if (!Array.isArray(questions) || questions.length === 0) {
     return 'at least one question is required';
@@ -52,6 +55,7 @@ function quizPayload(quiz, { includeQuestions = false, includeCorrect = true, te
     id: toId(quiz),
     title: quiz.title,
     description: quiz.description,
+    duration_minutes: quiz.duration_minutes,
     created_by: toId(quiz.created_by),
     created_at: quiz.created_at,
     question_count: quiz.questions.length,
@@ -68,10 +72,11 @@ function quizPayload(quiz, { includeQuestions = false, includeCorrect = true, te
   return payload;
 }
 
-function quizInput(title, description, questions, createdBy) {
+function quizInput(title, description, durationMinutes, questions, createdBy) {
   return {
     title: title.trim(),
     description: description?.trim() || '',
+    duration_minutes: Number(durationMinutes),
     ...(createdBy ? { created_by: createdBy } : {}),
     questions: questions.map((question, index) => ({
       text: question.text.trim(),
@@ -85,12 +90,12 @@ function quizInput(title, description, questions, createdBy) {
 }
 
 router.post('/', requireAuth, requireRole('teacher'), async (req, res) => {
-  const { title, description, questions } = req.body;
+  const { title, description, duration_minutes, questions } = req.body;
 
-  const validationError = validateQuizInput(title, questions);
+  const validationError = validateQuizInput(title, duration_minutes, questions);
   if (validationError) return res.status(400).json({ error: validationError });
 
-  const quiz = await Quiz.create(quizInput(title, description, questions, req.user.id));
+  const quiz = await Quiz.create(quizInput(title, description, duration_minutes, questions, req.user.id));
   return res.status(201).json(quizPayload(quiz));
 });
 
@@ -115,59 +120,99 @@ router.get('/:id', requireAuth, async (req, res) => {
   return res.json(quizPayload(quiz, { includeQuestions: true, includeCorrect: isTeacherOrAdmin }));
 });
 
-router.post('/:id/attempts', requireAuth, requireRole('student'), async (req, res) => {
+router.post('/:id/attempts/start', requireAuth, requireRole('student'), async (req, res) => {
   if (!isValidId(req.params.id)) return res.status(404).json({ error: 'quiz not found' });
 
   const quiz = await Quiz.findById(req.params.id);
   if (!quiz) return res.status(404).json({ error: 'quiz not found' });
 
-  const { answers } = req.body;
-  if (!Array.isArray(answers) || answers.length === 0) {
-    return res.status(400).json({ error: 'answers array is required' });
-  }
+  const now = new Date();
+  let attempt = await Attempt.findOne({
+    quiz_id: quiz._id,
+    student_id: req.user.id,
+    status: 'in_progress',
+  }).sort({ started_at: -1 });
 
-  if (answers.length !== quiz.questions.length) {
-    return res
-      .status(400)
-      .json({ error: `expected ${quiz.questions.length} answers, got ${answers.length}` });
-  }
-
-  let score = 0;
-  const answerPayload = [];
-
-  for (const answer of answers) {
-    const question = quiz.questions.find((item) => toId(item) === answer.question_id);
-    if (!question) {
-      return res.status(400).json({ error: `invalid question_id ${answer.question_id}` });
-    }
-
-    const option = question.options.find((item) => toId(item) === answer.option_id);
-    if (!option) {
-      return res
-        .status(400)
-        .json({ error: `invalid option_id ${answer.option_id} for question ${answer.question_id}` });
-    }
-
-    if (option.is_correct) score++;
-    answerPayload.push({
-      question_id: question._id,
-      option_id: option._id,
+  if (attempt && attempt.expires_at <= now) {
+    await submitAttempt(attempt, quiz);
+    return res.json({
+      attempt_id: toId(attempt),
+      status: 'submitted',
+      started_at: attempt.started_at,
+      expires_at: attempt.expires_at,
+      answers: attempt.answers.map((answer) => ({
+        question_id: toId(answer.question_id),
+        option_id: toId(answer.option_id),
+      })),
     });
   }
 
-  const attempt = await Attempt.create({
-    quiz_id: quiz._id,
-    student_id: req.user.id,
-    score,
-    total: quiz.questions.length,
-    answers: answerPayload,
-  });
+  if (!attempt) {
+    const durationMinutes = quiz.duration_minutes || 10;
+    attempt = await Attempt.create({
+      quiz_id: quiz._id,
+      student_id: req.user.id,
+      total: quiz.questions.length,
+      status: 'in_progress',
+      started_at: now,
+      expires_at: new Date(now.getTime() + durationMinutes * 60_000),
+      answers: [],
+    });
+  }
 
   return res.status(201).json({
     attempt_id: toId(attempt),
-    score,
+    started_at: attempt.started_at,
+    expires_at: attempt.expires_at,
+    answers: attempt.answers.map((answer) => ({
+      question_id: toId(answer.question_id),
+      option_id: toId(answer.option_id),
+    })),
+  });
+});
+
+function gradeAttempt(attempt, quiz) {
+  let score = 0;
+  for (const answer of attempt.answers) {
+    const question = quiz.questions.find((item) => toId(item) === toId(answer.question_id));
+    if (!question) continue;
+    const option = question.options.find((item) => toId(item) === toId(answer.option_id));
+    if (option?.is_correct) score++;
+  }
+  return score;
+}
+
+async function submitAttempt(attempt, quiz) {
+  if (attempt.status !== 'submitted') {
+    attempt.score = gradeAttempt(attempt, quiz);
+    attempt.total = quiz.questions.length;
+    attempt.status = 'submitted';
+    attempt.submitted_at = new Date();
+    await attempt.save();
+  }
+  return attempt;
+}
+
+router.post('/:id/attempts/:attemptId/submit', requireAuth, requireRole('student'), async (req, res) => {
+  if (!isValidId(req.params.id) || !isValidId(req.params.attemptId)) {
+    return res.status(404).json({ error: 'attempt not found' });
+  }
+  const [quiz, attempt] = await Promise.all([
+    Quiz.findById(req.params.id),
+    Attempt.findById(req.params.attemptId),
+  ]);
+  if (!quiz || !attempt || toId(attempt.quiz_id) !== req.params.id) {
+    return res.status(404).json({ error: 'attempt not found' });
+  }
+  if (toId(attempt.student_id) !== req.user.id) {
+    return res.status(403).json({ error: 'not your attempt' });
+  }
+  await submitAttempt(attempt, quiz);
+  return res.status(201).json({
+    attempt_id: toId(attempt),
+    score: attempt.score,
     total: quiz.questions.length,
-    percentage: Math.round((score / quiz.questions.length) * 100),
+    percentage: Math.round((attempt.score / quiz.questions.length) * 100),
   });
 });
 
@@ -178,11 +223,11 @@ router.put('/:id', requireAuth, requireRole('teacher'), async (req, res) => {
   if (!quiz) return res.status(404).json({ error: 'quiz not found' });
   if (toId(quiz.created_by) !== req.user.id) return res.status(403).json({ error: 'not your quiz' });
 
-  const { title, description, questions } = req.body;
-  const validationError = validateQuizInput(title, questions);
+  const { title, description, duration_minutes, questions } = req.body;
+  const validationError = validateQuizInput(title, duration_minutes, questions);
   if (validationError) return res.status(400).json({ error: validationError });
 
-  Object.assign(quiz, quizInput(title, description, questions));
+  Object.assign(quiz, quizInput(title, description, duration_minutes, questions));
   await quiz.save();
 
   return res.json(quizPayload(quiz));
@@ -210,7 +255,7 @@ router.get('/:id/attempts', requireAuth, requireRole('teacher'), async (req, res
   if (!quiz) return res.status(404).json({ error: 'quiz not found' });
   if (toId(quiz.created_by) !== req.user.id) return res.status(403).json({ error: 'not your quiz' });
 
-  const attempts = await Attempt.find({ quiz_id: quiz._id })
+  const attempts = await Attempt.find({ quiz_id: quiz._id, status: { $ne: 'in_progress' } })
     .sort({ submitted_at: -1 })
     .populate('student_id', 'name email');
 

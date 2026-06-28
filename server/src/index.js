@@ -42,8 +42,32 @@ app.get('/api/me', requireAuth, async (req, res) => {
   });
 });
 
+app.put('/api/attempts/:id/answer', requireAuth, requireRole('student'), async (req, res) => {
+  if (!isValidId(req.params.id)) return res.status(404).json({ error: 'attempt not found' });
+  const attempt = await Attempt.findById(req.params.id);
+  if (!attempt) return res.status(404).json({ error: 'attempt not found' });
+  if (toId(attempt.student_id) !== req.user.id) {
+    return res.status(403).json({ error: 'not your attempt' });
+  }
+  if (attempt.status !== 'in_progress' || new Date() >= attempt.expires_at) {
+    return res.status(409).json({ error: 'quiz time has expired' });
+  }
+
+  const quiz = await Quiz.findById(attempt.quiz_id);
+  const { question_id, option_id } = req.body;
+  const question = quiz?.questions.find((item) => toId(item) === question_id);
+  const option = question?.options.find((item) => toId(item) === option_id);
+  if (!question || !option) return res.status(400).json({ error: 'invalid question or option' });
+
+  const existing = attempt.answers.find((answer) => toId(answer.question_id) === question_id);
+  if (existing) existing.option_id = option._id;
+  else attempt.answers.push({ question_id: question._id, option_id: option._id });
+  await attempt.save();
+  return res.json({ message: 'answer saved' });
+});
+
 app.get('/api/attempts/me', requireAuth, requireRole('student'), async (req, res) => {
-  const attempts = await Attempt.find({ student_id: req.user.id })
+  const attempts = await Attempt.find({ student_id: req.user.id, status: { $ne: 'in_progress' } })
     .sort({ submitted_at: -1 })
     .populate('quiz_id', 'title');
 

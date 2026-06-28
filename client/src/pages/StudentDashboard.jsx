@@ -41,6 +41,7 @@ function StudentDashboard({ token, onTake, onResult }) {
           {quizzes.map((quiz) => (
             <article className="relative grid content-start gap-3 overflow-hidden rounded-lg border border-indigo-100 bg-white p-5.5 pt-7 shadow-[0_14px_34px_rgba(79,70,229,0.1)] transition before:absolute before:inset-x-0 before:top-0 before:h-1.5 before:bg-gradient-to-r before:from-emerald-500 before:via-blue-500 before:to-pink-500 hover:-translate-y-1 hover:shadow-[0_22px_48px_rgba(79,70,229,0.16)]" key={quiz.id}>
               <span className={card.pill}>{quiz.question_count} questions</span>
+              <span className={card.pill}>{quiz.duration_minutes || 10} minutes</span>
               <h2>{quiz.title}</h2>
               <p>{quiz.description || 'No description provided.'}</p>
               <small className={text.small}>By {quiz.teacher_name}</small>

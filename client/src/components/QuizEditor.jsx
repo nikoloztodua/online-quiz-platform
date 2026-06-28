@@ -7,11 +7,12 @@ function QuizEditor({ token, quiz, onSaved }) {
   const initialForm = quiz ? {
     title: quiz.title,
     description: quiz.description,
+    duration_minutes: quiz.duration_minutes || 10,
     questions: quiz.questions.map((question) => ({
       text: question.text,
       options: question.options.map((option) => ({ text: option.text, is_correct: Boolean(option.is_correct) })),
     })),
-  } : { title: '', description: '', questions: [emptyQuestion()] };
+  } : { title: '', description: '', duration_minutes: 10, questions: [emptyQuestion()] };
   
   const [form, setForm] = useState(initialForm);
   const [error, setError] = useState('');
@@ -94,6 +95,19 @@ function QuizEditor({ token, quiz, onSaved }) {
         <label className={formStyles.label}>
           Description
           <input className={formStyles.control} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+        </label>
+        <label className={formStyles.label}>
+          Time limit (minutes)
+          <input
+            className={formStyles.control}
+            type="number"
+            min="1"
+            max="180"
+            step="1"
+            value={form.duration_minutes}
+            onChange={(e) => setForm({ ...form, duration_minutes: Number(e.target.value) })}
+            required
+          />
         </label>
       </div>
       
