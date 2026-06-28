@@ -18,11 +18,16 @@ function userResponse(user) {
 
 router.post('/register', async (req, res) => {
   try {
-    const { email, password, name, role } = req.body;
+    const { email, password, password_confirmation, name, role } = req.body;
     const normalizedEmail = email?.trim().toLowerCase();
 
-    if (!normalizedEmail || !password || !name || !role) {
-      return res.status(400).json({ error: 'All fields required: email, password, name, role' });
+    if (!normalizedEmail || !password || !password_confirmation || !name || !role) {
+      return res.status(400).json({
+        error: 'All fields required: email, password, password confirmation, name, role',
+      });
+    }
+    if (password !== password_confirmation) {
+      return res.status(400).json({ error: 'Passwords do not match' });
     }
     if (!ALLOWED_ROLES.includes(role)) {
       return res.status(400).json({ error: `Role must be one of: ${ALLOWED_ROLES.join(', ')}` });

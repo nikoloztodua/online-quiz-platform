@@ -5,11 +5,23 @@ import { brand, button, cn, form as formStyles, layout, text } from '../lib/ui.j
 
 function AuthPage({ onSession }) {
   const [mode, setMode] = useState('login');
-  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'student' });
+  const [form, setForm] = useState({
+    name: '',
+    email: '',
+    password: '',
+    password_confirmation: '',
+    role: 'student',
+  });
   const [status, setStatus] = useState({ loading: false, error: '' });
 
   async function submit(event) {
     event.preventDefault();
+
+    if (mode === 'register' && form.password !== form.password_confirmation) {
+      setStatus({ loading: false, error: 'Passwords do not match' });
+      return;
+    }
+
     setStatus({ loading: true, error: '' });
     try {
       if (mode === 'register') {
@@ -72,6 +84,20 @@ function AuthPage({ onSession }) {
             Password
             <input className={formStyles.control} type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required minLength={6} />
           </label>
+          {mode === 'register' && (
+            <label className={formStyles.label}>
+              Confirm password
+              <input
+                className={formStyles.control}
+                type="password"
+                value={form.password_confirmation}
+                onChange={(e) => setForm({ ...form, password_confirmation: e.target.value })}
+                required
+                minLength={6}
+                autoComplete="new-password"
+              />
+            </label>
+          )}
           {mode === 'register' && (
             <label className={formStyles.label}>
               Role

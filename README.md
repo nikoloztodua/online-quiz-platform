@@ -34,6 +34,19 @@ In development.
 
 docker compose up -d mongodb
 
+## Development admin account
+
+The server creates the first administrator at startup using `ADMIN_NAME`,
+`ADMIN_EMAIL`, and `ADMIN_PASSWORD` from `server/.env`.
+
+Default local credentials:
+
+- Email: `admin@quizline.local`
+- Password: `Admin123!`
+
+Copy `server/.env.example` to `server/.env` when setting up a new environment,
+and change these credentials before deployment.
+
 ## stop the database
 
 docker compose down
