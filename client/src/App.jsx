@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import TopBar from './components/TopBar.jsx';
 import AdminPanel from './pages/AdminPanel.jsx';
+import AdminQuizDetail from './pages/AdminQuizDetail.jsx';
 import AuthPage from './pages/AuthPage.jsx';
 import ResultPage from './pages/ResultPage.jsx';
 import StudentDashboard from './pages/StudentDashboard.jsx';
@@ -59,7 +60,9 @@ function App() {
         break;
         
       case 'admin':
-        content = <AdminPanel token={token} user={user} />;
+        content = view === 'admin-quiz'
+          ? <AdminQuizDetail token={token} quizId={selectedQuizId} onBack={() => setView('dashboard')} />
+          : <AdminPanel token={token} user={user} onOpenQuiz={(id) => { setSelectedQuizId(id); setView('admin-quiz'); }} />;
         break;
         
       case 'student':

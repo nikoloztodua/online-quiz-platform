@@ -3,6 +3,7 @@ import { apiRequest } from '../lib/api.js';
 import { formatDate } from '../lib/formatDate.js';
 import { roleLabels } from '../constants/roles.js';
 import { button, card, cn, form as formStyles, layout, text } from '../lib/ui.js';
+import AdminQuizList from '../components/AdminQuizList.jsx';
 
 const EMPTY_NEW_USER = { name: '', email: '', password: '', role: 'student' };
 
@@ -18,13 +19,14 @@ function StatCard({ label, value }) {
   );
 }
 
-function AdminPanel({ token, user }) {
+function AdminPanel({ token, user, onOpenQuiz }) {
   const [users, setUsers] = useState([]);
   const [stats, setStats] = useState(null);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [newUser, setNewUser] = useState(EMPTY_NEW_USER);
   const [createState, setCreateState] = useState({ loading: false, error: '', success: '' });
+  const [section, setSection] = useState('quizzes');
 
   async function load() {
     try {
@@ -127,6 +129,12 @@ function AdminPanel({ token, user }) {
         </div>
       )}
 
+      <div className="mb-7 flex gap-2 border-b border-indigo-100 pb-3">
+        <button className={section === 'quizzes' ? button.primary : button.ghost} onClick={() => setSection('quizzes')}>Quizzes</button>
+        <button className={section === 'users' ? button.primary : button.ghost} onClick={() => setSection('users')}>Users</button>
+      </div>
+
+      {section === 'quizzes' ? <AdminQuizList token={token} teachers={users.filter((account) => account.role === 'teacher')} onOpen={onOpenQuiz} /> : <>
       <section className={cn(card.question, 'mb-7')}>
         <p className={text.eyebrow}>Create account</p>
         <form onSubmit={createUser} className="grid grid-cols-4 items-end gap-3 max-[920px]:grid-cols-2 max-sm:grid-cols-1">
@@ -196,6 +204,7 @@ function AdminPanel({ token, user }) {
           </tbody>
         </table>
       </div>
+      </>}
     </main>
   );
 }
