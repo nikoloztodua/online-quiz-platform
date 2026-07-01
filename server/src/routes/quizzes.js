@@ -4,6 +4,8 @@ import { Attempt, Quiz, User, isValidId, toId } from '../db/init.js';
 
 const router = express.Router();
 
+const DIFFICULTIES = ['easy', 'medium', 'hard'];
+
 function validateQuizInput(title, durationMinutes, questions) {
   if (!title || !title.trim()) {
     return 'title is required';
@@ -17,6 +19,15 @@ function validateQuizInput(title, durationMinutes, questions) {
   for (const [qi, q] of questions.entries()) {
     if (!q.text || !q.text.trim()) {
       return `question ${qi + 1}: text is required`;
+    }
+    if (q.difficulty && !DIFFICULTIES.includes(q.difficulty)) {
+      return `question ${qi + 1}: invalid difficulty`;
+    }
+    if (q.points !== undefined && q.points !== null && q.points !== '') {
+      const p = Number(q.points);
+      if (!Number.isFinite(p) || p <= 0) {
+        return `question ${qi + 1}: points must be a positive number`;
+      }
     }
     if (!Array.isArray(q.options) || q.options.length < 2) {
       return `question ${qi + 1}: at least 2 options required`;
@@ -37,6 +48,8 @@ function questionPayload(question, includeCorrect = true, selectedOptionId = nul
     id: toId(question),
     text: question.text,
     order_index: question.order_index,
+    difficulty: question.difficulty,
+    points: question.points,
     selected_option_id: selectedOptionId,
     options: question.options.map((option) => {
       const payload = {
@@ -51,6 +64,8 @@ function questionPayload(question, includeCorrect = true, selectedOptionId = nul
 }
 
 function quizPayload(quiz, { includeQuestions = false, includeCorrect = true, teacherName = null } = {}) {
+  const maxPoints = quiz.questions.reduce((sum, q) => sum + (q.points || 1), 0);
+
   const payload = {
     id: toId(quiz),
     title: quiz.title,
@@ -59,6 +74,7 @@ function quizPayload(quiz, { includeQuestions = false, includeCorrect = true, te
     created_by: toId(quiz.created_by),
     created_at: quiz.created_at,
     question_count: quiz.questions.length,
+    max_points: maxPoints,
   };
 
   if (teacherName !== null) payload.teacher_name = teacherName;
@@ -81,6 +97,8 @@ function quizInput(title, description, durationMinutes, questions, createdBy) {
     questions: questions.map((question, index) => ({
       text: question.text.trim(),
       order_index: index,
+      difficulty: question.difficulty || 'medium',
+      points: question.points ? Number(question.points) : 1,
       options: question.options.map((option) => ({
         text: option.text.trim(),
         is_correct: Boolean(option.is_correct),
@@ -126,6 +144,8 @@ router.post('/:id/attempts/start', requireAuth, requireRole('student'), async (r
   const quiz = await Quiz.findById(req.params.id);
   if (!quiz) return res.status(404).json({ error: 'quiz not found' });
 
+  const maxPoints = quiz.questions.reduce((sum, q) => sum + (q.points || 1), 0);
+
   const now = new Date();
   let attempt = await Attempt.findOne({
     quiz_id: quiz._id,
@@ -152,7 +172,7 @@ router.post('/:id/attempts/start', requireAuth, requireRole('student'), async (r
     attempt = await Attempt.create({
       quiz_id: quiz._id,
       student_id: req.user.id,
-      total: quiz.questions.length,
+      total: maxPoints,
       status: 'in_progress',
       started_at: now,
       expires_at: new Date(now.getTime() + durationMinutes * 60_000),
@@ -177,15 +197,16 @@ function gradeAttempt(attempt, quiz) {
     const question = quiz.questions.find((item) => toId(item) === toId(answer.question_id));
     if (!question) continue;
     const option = question.options.find((item) => toId(item) === toId(answer.option_id));
-    if (option?.is_correct) score++;
+    if (option?.is_correct) score += question.points || 1;
   }
   return score;
 }
 
 async function submitAttempt(attempt, quiz) {
   if (attempt.status !== 'submitted') {
+    const maxPoints = quiz.questions.reduce((sum, q) => sum + (q.points || 1), 0);
     attempt.score = gradeAttempt(attempt, quiz);
-    attempt.total = quiz.questions.length;
+    attempt.total = maxPoints;
     attempt.status = 'submitted';
     attempt.submitted_at = new Date();
     await attempt.save();
@@ -211,8 +232,8 @@ router.post('/:id/attempts/:attemptId/submit', requireAuth, requireRole('student
   return res.status(201).json({
     attempt_id: toId(attempt),
     score: attempt.score,
-    total: quiz.questions.length,
-    percentage: Math.round((attempt.score / quiz.questions.length) * 100),
+    total: attempt.total,
+    percentage: Math.round((attempt.score / attempt.total) * 100),
   });
 });
 
