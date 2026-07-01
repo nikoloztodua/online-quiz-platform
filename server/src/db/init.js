@@ -1,7 +1,5 @@
 import mongoose from 'mongoose';
-
 const { Schema } = mongoose;
-
 const userSchema = new Schema({
   email: { type: String, required: true, unique: true, trim: true, lowercase: true },
   password_hash: { type: String, required: true },
@@ -13,18 +11,17 @@ const userSchema = new Schema({
   },
   created_at: { type: Date, default: Date.now },
 });
-
 const optionSchema = new Schema({
   text: { type: String, required: true, trim: true },
   is_correct: { type: Boolean, required: true, default: false },
 });
-
 const questionSchema = new Schema({
   text: { type: String, required: true, trim: true },
   order_index: { type: Number, required: true, default: 0 },
+  difficulty: { type: String, enum: ['easy', 'medium', 'hard'], default: 'medium' },
+  points: { type: Number, required: true, default: 1, min: 1 },
   options: { type: [optionSchema], default: [] },
 });
-
 const quizSchema = new Schema({
   title: { type: String, required: true, trim: true },
   description: { type: String, default: '', trim: true },
@@ -33,12 +30,10 @@ const quizSchema = new Schema({
   questions: { type: [questionSchema], default: [] },
   created_at: { type: Date, default: Date.now },
 });
-
 const answerSchema = new Schema({
   question_id: { type: Schema.Types.ObjectId, required: true },
   option_id: { type: Schema.Types.ObjectId, required: true },
 });
-
 const attemptSchema = new Schema({
   quiz_id: { type: Schema.Types.ObjectId, ref: 'Quiz', required: true },
   student_id: { type: Schema.Types.ObjectId, ref: 'User', required: true },
@@ -50,19 +45,15 @@ const attemptSchema = new Schema({
   expires_at: { type: Date },
   submitted_at: { type: Date },
 });
-
 export const User = mongoose.model('User', userSchema);
 export const Quiz = mongoose.model('Quiz', quizSchema);
 export const Attempt = mongoose.model('Attempt', attemptSchema);
-
 export function isValidId(id) {
   return mongoose.Types.ObjectId.isValid(id);
 }
-
 export function toId(value) {
   return value?._id?.toString?.() || value?.toString?.() || value;
 }
-
 export async function connectDb() {
   const uri = process.env.MONGO_URI || 'mongodb://localhost:27017/online_quiz_platform';
   await mongoose.connect(uri);
