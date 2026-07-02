@@ -1,10 +1,26 @@
-import express from 'express';
-import { requireAuth, requireRole } from '../middleware/auth.js';
-import { Attempt, Quiz, User, isValidId, toId } from '../db/init.js';
-
-const router = express.Router();
+import { useState } from 'react';
+import { apiRequest } from '../lib/api.js';
+import { button, card, form as formStyles, layout, text } from '../lib/ui.js';
 
 const DIFFICULTIES = ['easy', 'medium', 'hard'];
+
+function emptyOption(isCorrect = false) {
+  return { text: '', is_correct: isCorrect };
+}
+
+function emptyQuestion() {
+  return { text: '', difficulty: 'medium', points: 1, options: [emptyOption(true), emptyOption()] };
+}
+
+function questionsFromQuiz(quiz) {
+  if (!quiz?.questions?.length) return [emptyQuestion()];
+  return quiz.questions.map((question) => ({
+    text: question.text,
+    difficulty: question.difficulty || 'medium',
+    points: question.points || 1,
+    options: question.options.map((option) => ({ text: option.text, is_correct: Boolean(option.is_correct) })),
+  }));
+}
 
 function validateQuizInput(title, durationMinutes, questions) {
   if (!title || !title.trim()) {
@@ -43,255 +59,154 @@ function validateQuizInput(title, durationMinutes, questions) {
   return null;
 }
 
-function questionPayload(question, includeCorrect = true, selectedOptionId = null) {
-  return {
-    id: toId(question),
-    text: question.text,
-    order_index: question.order_index,
-    difficulty: question.difficulty,
-    points: question.points,
-    selected_option_id: selectedOptionId,
-    options: question.options.map((option) => {
-      const payload = {
-        id: toId(option),
-        question_id: toId(question),
-        text: option.text,
-      };
-      if (includeCorrect) payload.is_correct = option.is_correct;
-      return payload;
-    }),
-  };
-}
+function QuizEditor({ token, quiz, onSaved }) {
+  const [title, setTitle] = useState(quiz?.title || '');
+  const [description, setDescription] = useState(quiz?.description || '');
+  const [durationMinutes, setDurationMinutes] = useState(quiz?.duration_minutes || 10);
+  const [questions, setQuestions] = useState(questionsFromQuiz(quiz));
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
 
-function quizPayload(quiz, { includeQuestions = false, includeCorrect = true, teacherName = null } = {}) {
-  const maxPoints = quiz.questions.reduce((sum, q) => sum + (q.points || 1), 0);
-
-  const payload = {
-    id: toId(quiz),
-    title: quiz.title,
-    description: quiz.description,
-    duration_minutes: quiz.duration_minutes,
-    created_by: toId(quiz.created_by),
-    created_at: quiz.created_at,
-    question_count: quiz.questions.length,
-    max_points: maxPoints,
-  };
-
-  if (teacherName !== null) payload.teacher_name = teacherName;
-  if (includeQuestions) {
-    payload.questions = quiz.questions
-      .slice()
-      .sort((a, b) => a.order_index - b.order_index)
-      .map((question) => questionPayload(question, includeCorrect));
+  function updateQuestion(index, patch) {
+    setQuestions((current) => current.map((question, i) => (i === index ? { ...question, ...patch } : question)));
   }
 
-  return payload;
-}
+  function updateOption(qIndex, oIndex, patch) {
+    setQuestions((current) => current.map((question, i) => {
+      if (i !== qIndex) return question;
+      return { ...question, options: question.options.map((option, j) => (j === oIndex ? { ...option, ...patch } : option)) };
+    }));
+  }
 
-function quizInput(title, description, durationMinutes, questions, createdBy) {
-  return {
-    title: title.trim(),
-    description: description?.trim() || '',
-    duration_minutes: Number(durationMinutes),
-    ...(createdBy ? { created_by: createdBy } : {}),
-    questions: questions.map((question, index) => ({
-      text: question.text.trim(),
-      order_index: index,
-      difficulty: question.difficulty || 'medium',
-      points: question.points ? Number(question.points) : 1,
-      options: question.options.map((option) => ({
-        text: option.text.trim(),
-        is_correct: Boolean(option.is_correct),
+  function setCorrectOption(qIndex, oIndex) {
+    setQuestions((current) => current.map((question, i) => {
+      if (i !== qIndex) return question;
+      return { ...question, options: question.options.map((option, j) => ({ ...option, is_correct: j === oIndex })) };
+    }));
+  }
+
+  function addQuestion() {
+    setQuestions((current) => [...current, emptyQuestion()]);
+  }
+
+  function removeQuestion(index) {
+    setQuestions((current) => current.filter((_, i) => i !== index));
+  }
+
+  function addOption(qIndex) {
+    setQuestions((current) => current.map((question, i) => (
+      i === qIndex ? { ...question, options: [...question.options, emptyOption()] } : question
+    )));
+  }
+
+  function removeOption(qIndex, oIndex) {
+    setQuestions((current) => current.map((question, i) => {
+      if (i !== qIndex) return question;
+      let options = question.options.filter((_, j) => j !== oIndex);
+      if (options.length && !options.some((option) => option.is_correct)) {
+        options = options.map((option, j) => (j === 0 ? { ...option, is_correct: true } : option));
+      }
+      return { ...question, options };
+    }));
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    const validationError = validateQuizInput(title, durationMinutes, questions);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
+    const payload = {
+      title: title.trim(),
+      description: description.trim(),
+      duration_minutes: Number(durationMinutes),
+      questions: questions.map((question) => ({
+        text: question.text.trim(),
+        difficulty: question.difficulty || 'medium',
+        points: question.points ? Number(question.points) : 1,
+        options: question.options.map((option) => ({ text: option.text.trim(), is_correct: Boolean(option.is_correct) })),
       })),
-    })),
-  };
-}
+    };
 
-router.post('/', requireAuth, requireRole('teacher'), async (req, res) => {
-  const { title, description, duration_minutes, questions } = req.body;
+    setError('');
+    setSaving(true);
+    try {
+      if (quiz) {
+        await apiRequest(`/quizzes/${quiz.id}`, { method: 'PUT', token, body: JSON.stringify(payload) });
+      } else {
+        await apiRequest('/quizzes', { method: 'POST', token, body: JSON.stringify(payload) });
+      }
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
 
-  const validationError = validateQuizInput(title, duration_minutes, questions);
-  if (validationError) return res.status(400).json({ error: validationError });
+  return (
+    <form className={layout.formStack} onSubmit={handleSubmit}>
+      <h2>{quiz ? 'Edit quiz' : 'Create a quiz'}</h2>
+      <label className={formStyles.label}>
+        Title
+        <input className={formStyles.control} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Quiz title" />
+      </label>
+      <label className={formStyles.label}>
+        Description
+        <textarea className={formStyles.textarea} value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Optional description" />
+      </label>
+      <label className={formStyles.label}>
+        Duration (minutes)
+        <input className={formStyles.control} type="number" min="1" max="180" value={durationMinutes} onChange={(event) => setDurationMinutes(event.target.value)} />
+      </label>
 
-  const quiz = await Quiz.create(quizInput(title, description, duration_minutes, questions, req.user.id));
-  return res.status(201).json(quizPayload(quiz));
-});
+      <div className={layout.listStack}>
+        {questions.map((question, qIndex) => (
+          <fieldset className={card.question} key={qIndex}>
+            <div className={layout.rowBetween}>
+              <legend className="p-0 font-black">Question {qIndex + 1}</legend>
+              <button type="button" className={button.danger} onClick={() => removeQuestion(qIndex)} disabled={questions.length <= 1}>Remove question</button>
+            </div>
+            <label className={formStyles.label}>
+              Question text
+              <input className={formStyles.control} value={question.text} onChange={(event) => updateQuestion(qIndex, { text: event.target.value })} placeholder="Question text" />
+            </label>
+            <div className={layout.twoColumn}>
+              <label className={formStyles.label}>
+                Difficulty
+                <select className={formStyles.control} value={question.difficulty} onChange={(event) => updateQuestion(qIndex, { difficulty: event.target.value })}>
+                  <option value="easy">Easy</option>
+                  <option value="medium">Medium</option>
+                  <option value="hard">Hard</option>
+                </select>
+              </label>
+              <label className={formStyles.label}>
+                Points
+                <input className={formStyles.control} type="number" min="1" step="1" value={question.points} onChange={(event) => updateQuestion(qIndex, { points: event.target.value })} />
+              </label>
+            </div>
+            <div className={layout.listStack}>
+              {question.options.map((option, oIndex) => (
+                <div className="grid grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-2.5" key={oIndex}>
+                  <input className={formStyles.radio} type="radio" name={`correct-${qIndex}`} checked={option.is_correct} onChange={() => setCorrectOption(qIndex, oIndex)} title="Correct option" />
+                  <input className={formStyles.control} value={option.text} onChange={(event) => updateOption(qIndex, oIndex, { text: event.target.value })} placeholder={`Option ${oIndex + 1}`} />
+                  <button type="button" className={button.ghost} onClick={() => removeOption(qIndex, oIndex)} disabled={question.options.length <= 2}>Remove</button>
+                </div>
+              ))}
+            </div>
+            <button type="button" className={button.ghost} onClick={() => addOption(qIndex)}>Add option</button>
+          </fieldset>
+        ))}
+      </div>
 
-router.get('/', requireAuth, async (req, res) => {
-  const quizzes = await Quiz.find().sort({ created_at: -1 }).populate('created_by', 'name');
-  return res.json(
-    quizzes.map((quiz) =>
-      quizPayload(quiz, {
-        teacherName: quiz.created_by?.name || 'Unknown teacher',
-      })
-    )
+      <button type="button" className={button.ghost} onClick={addQuestion}>Add question</button>
+
+      {error && <p className={text.error}>{error}</p>}
+      <button className={button.primary} disabled={saving}>{saving ? 'Saving…' : quiz ? 'Save changes' : 'Create quiz'}</button>
+    </form>
   );
-});
-
-router.get('/:id', requireAuth, async (req, res) => {
-  if (!isValidId(req.params.id)) return res.status(404).json({ error: 'quiz not found' });
-
-  const quiz = await Quiz.findById(req.params.id);
-  if (!quiz) return res.status(404).json({ error: 'quiz not found' });
-
-  const isTeacherOrAdmin = req.user.role === 'teacher' || req.user.role === 'admin';
-  return res.json(quizPayload(quiz, { includeQuestions: true, includeCorrect: isTeacherOrAdmin }));
-});
-
-router.post('/:id/attempts/start', requireAuth, requireRole('student'), async (req, res) => {
-  if (!isValidId(req.params.id)) return res.status(404).json({ error: 'quiz not found' });
-
-  const quiz = await Quiz.findById(req.params.id);
-  if (!quiz) return res.status(404).json({ error: 'quiz not found' });
-
-  const maxPoints = quiz.questions.reduce((sum, q) => sum + (q.points || 1), 0);
-
-  const now = new Date();
-  let attempt = await Attempt.findOne({
-    quiz_id: quiz._id,
-    student_id: req.user.id,
-    status: 'in_progress',
-  }).sort({ started_at: -1 });
-
-  if (attempt && attempt.expires_at <= now) {
-    await submitAttempt(attempt, quiz);
-    return res.json({
-      attempt_id: toId(attempt),
-      status: 'submitted',
-      started_at: attempt.started_at,
-      expires_at: attempt.expires_at,
-      answers: attempt.answers.map((answer) => ({
-        question_id: toId(answer.question_id),
-        option_id: toId(answer.option_id),
-      })),
-    });
-  }
-
-  if (!attempt) {
-    const durationMinutes = quiz.duration_minutes || 10;
-    attempt = await Attempt.create({
-      quiz_id: quiz._id,
-      student_id: req.user.id,
-      total: maxPoints,
-      status: 'in_progress',
-      started_at: now,
-      expires_at: new Date(now.getTime() + durationMinutes * 60_000),
-      answers: [],
-    });
-  }
-
-  return res.status(201).json({
-    attempt_id: toId(attempt),
-    started_at: attempt.started_at,
-    expires_at: attempt.expires_at,
-    answers: attempt.answers.map((answer) => ({
-      question_id: toId(answer.question_id),
-      option_id: toId(answer.option_id),
-    })),
-  });
-});
-
-function gradeAttempt(attempt, quiz) {
-  let score = 0;
-  for (const answer of attempt.answers) {
-    const question = quiz.questions.find((item) => toId(item) === toId(answer.question_id));
-    if (!question) continue;
-    const option = question.options.find((item) => toId(item) === toId(answer.option_id));
-    if (option?.is_correct) score += question.points || 1;
-  }
-  return score;
 }
 
-async function submitAttempt(attempt, quiz) {
-  if (attempt.status !== 'submitted') {
-    const maxPoints = quiz.questions.reduce((sum, q) => sum + (q.points || 1), 0);
-    attempt.score = gradeAttempt(attempt, quiz);
-    attempt.total = maxPoints;
-    attempt.status = 'submitted';
-    attempt.submitted_at = new Date();
-    await attempt.save();
-  }
-  return attempt;
-}
-
-router.post('/:id/attempts/:attemptId/submit', requireAuth, requireRole('student'), async (req, res) => {
-  if (!isValidId(req.params.id) || !isValidId(req.params.attemptId)) {
-    return res.status(404).json({ error: 'attempt not found' });
-  }
-  const [quiz, attempt] = await Promise.all([
-    Quiz.findById(req.params.id),
-    Attempt.findById(req.params.attemptId),
-  ]);
-  if (!quiz || !attempt || toId(attempt.quiz_id) !== req.params.id) {
-    return res.status(404).json({ error: 'attempt not found' });
-  }
-  if (toId(attempt.student_id) !== req.user.id) {
-    return res.status(403).json({ error: 'not your attempt' });
-  }
-  await submitAttempt(attempt, quiz);
-  return res.status(201).json({
-    attempt_id: toId(attempt),
-    score: attempt.score,
-    total: attempt.total,
-    percentage: Math.round((attempt.score / attempt.total) * 100),
-  });
-});
-
-router.put('/:id', requireAuth, requireRole('teacher'), async (req, res) => {
-  if (!isValidId(req.params.id)) return res.status(404).json({ error: 'quiz not found' });
-
-  const quiz = await Quiz.findById(req.params.id);
-  if (!quiz) return res.status(404).json({ error: 'quiz not found' });
-  if (toId(quiz.created_by) !== req.user.id) return res.status(403).json({ error: 'not your quiz' });
-
-  const { title, description, duration_minutes, questions } = req.body;
-  const validationError = validateQuizInput(title, duration_minutes, questions);
-  if (validationError) return res.status(400).json({ error: validationError });
-
-  Object.assign(quiz, quizInput(title, description, duration_minutes, questions));
-  await quiz.save();
-
-  return res.json(quizPayload(quiz));
-});
-
-router.delete('/:id', requireAuth, requireRole('teacher'), async (req, res) => {
-  if (!isValidId(req.params.id)) return res.status(404).json({ error: 'quiz not found' });
-
-  const quiz = await Quiz.findById(req.params.id);
-  if (!quiz) return res.status(404).json({ error: 'quiz not found' });
-  if (toId(quiz.created_by) !== req.user.id) return res.status(403).json({ error: 'not your quiz' });
-
-  await Promise.all([
-    Attempt.deleteMany({ quiz_id: quiz._id }),
-    Quiz.deleteOne({ _id: quiz._id }),
-  ]);
-
-  return res.json({ message: 'quiz and all associated questions/options deleted successfully' });
-});
-
-router.get('/:id/attempts', requireAuth, requireRole('teacher'), async (req, res) => {
-  if (!isValidId(req.params.id)) return res.status(404).json({ error: 'quiz not found' });
-
-  const quiz = await Quiz.findById(req.params.id);
-  if (!quiz) return res.status(404).json({ error: 'quiz not found' });
-  if (toId(quiz.created_by) !== req.user.id) return res.status(403).json({ error: 'not your quiz' });
-
-  const attempts = await Attempt.find({ quiz_id: quiz._id, status: { $ne: 'in_progress' } })
-    .sort({ submitted_at: -1 })
-    .populate('student_id', 'name email');
-
-  return res.json(
-    attempts.map((attempt) => ({
-      id: toId(attempt),
-      quiz_id: toId(attempt.quiz_id),
-      student_id: toId(attempt.student_id),
-      student_name: attempt.student_id?.name || 'Unknown student',
-      student_email: attempt.student_id?.email || '',
-      score: attempt.score,
-      total: attempt.total,
-      submitted_at: attempt.submitted_at,
-    }))
-  );
-});
-
-export default router;
+export default QuizEditor;
