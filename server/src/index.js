@@ -7,7 +7,7 @@ import { Attempt, Quiz, User, connectDb, isValidId, toId } from './db/init.js';
 import { seedAdmin } from './db/seedAdmin.js';
 import { requireAuth, requireRole } from './middleware/auth.js';
 import authRouter from './routes/auth.js';
-import quizzesRouter from './routes/quizzes.js';
+import quizzesRouter, { submitAttempt } from './routes/quizzes.js';
 import adminRouter from './routes/admin.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -145,14 +145,33 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal Server Error' });
 });
 
+async function sweepExpiredAttempts() {
+  const expired = await Attempt.find({ status: 'in_progress', expires_at: { $lte: new Date() } });
+  for (const attempt of expired) {
+    const quiz = await Quiz.findById(attempt.quiz_id);
+    if (quiz) await submitAttempt(attempt, quiz);
+  }
+}
+
+let sweepInterval;
+
 connectDb()
   .then(seedAdmin)
   .then(() => {
     app.listen(PORT, () => {
       console.log(`Server running on http://localhost:${PORT}`);
     });
+    sweepInterval = setInterval(() => {
+      sweepExpiredAttempts().catch((err) => console.error('Expired-attempt sweep failed:', err));
+    }, 60_000);
   })
   .catch((err) => {
     console.error('Server startup failed:', err);
     process.exit(1);
   });
+
+process.on('exit', () => clearInterval(sweepInterval));
+process.on('SIGTERM', () => {
+  clearInterval(sweepInterval);
+  process.exit(0);
+});

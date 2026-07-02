@@ -202,7 +202,7 @@ function gradeAttempt(attempt, quiz) {
   return score;
 }
 
-async function submitAttempt(attempt, quiz) {
+export async function submitAttempt(attempt, quiz) {
   if (attempt.status !== 'submitted') {
     const maxPoints = quiz.questions.reduce((sum, q) => sum + (q.points || 1), 0);
     attempt.score = gradeAttempt(attempt, quiz);

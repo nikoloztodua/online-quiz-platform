@@ -1,10 +1,21 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { User, toId } from '../db/init.js';
 import { hashPassword, verifyPassword, signToken } from '../utils/auth.js';
 
 const router = express.Router();
 
 const ALLOWED_ROLES = ['student', 'teacher'];
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    res.status(429).json({ error: 'Too many attempts from this IP. Please try again in 15 minutes.' });
+  },
+});
 
 function userResponse(user) {
   return {
@@ -16,7 +27,7 @@ function userResponse(user) {
   };
 }
 
-router.post('/register', async (req, res) => {
+router.post('/register', authLimiter, async (req, res) => {
   try {
     const { email, password, password_confirmation, name, role } = req.body;
     const normalizedEmail = email?.trim().toLowerCase();
@@ -59,7 +70,7 @@ router.post('/register', async (req, res) => {
   }
 });
 
-router.post('/login', async (req, res) => {
+router.post('/login', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
     const normalizedEmail = email?.trim().toLowerCase();
